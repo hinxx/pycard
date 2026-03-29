@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycard"
+version = "0.1.6"
+description = "pycard smart-card wallet utility"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "customtkinter>=5.2",
+    "pyscard>=2.0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+windows-build = [
+    "pyinstaller>=6.0",
+]
+
+[tool.setuptools]
+packages = ["pycard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
