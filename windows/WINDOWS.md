@@ -129,25 +129,22 @@ If the first card access is still very slow, disable Certificate Propagation.
 PowerShell as Administrator:
 
 ```powershell
-Stop-Service CertPropSvc
+Stop-Service CertPropSvc -Force
 Set-Service CertPropSvc -StartupType Disabled
+sc.exe config CertPropSvc start= disabled
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\CertPropSvc" /v Start /t REG_DWORD /d 4 /f
+
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\ScPnP" /v EnableScPnP /t REG_DWORD /d 0 /f
+
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CertProp" /v CertPropEnabled /t REG_DWORD /d 0 /f
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CertProp" /v EnableRootCertificatePropagation /t REG_DWORD /d 0 /f
+
+Stop-Service ScDeviceEnum -Force
+Set-Service ScDeviceEnum -StartupType Disabled
+sc.exe config ScDeviceEnum start= disabled
+
 ```
 
-To verify:
-
-```powershell
-Get-Service CertPropSvc
-```
-
-You want to see it as `Stopped`.
-
-Or configure the policy through the registry:
-
-```powershell
-New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CertProp" -Force
-New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CertProp" -Name "CertPropEnabled" -PropertyType DWord -Value 0 -Force
-```
-
-Reboot after changing the policy.
+You might need to reboot after changing the policy.
 
 This has been confirmed to remove the long delay on Windows 10 in this project setup.
