@@ -1,0 +1,35 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Create virtual environment
+        run: py -3.13 -m venv .venv
+
+      - name: Install build dependencies
+        run: .\.venv\Scripts\python.exe -m pip install --upgrade pip && .\.venv\Scripts\python.exe -m pip install -e ".[windows-build]"
+
+      - name: Build executable
+        run: windows\build-windows.bat
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pycard-windows
+          path: dist/pycard
