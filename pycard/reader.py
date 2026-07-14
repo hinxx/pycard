@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from pycard.models import (
     CARD_DEFAULT_PIN,
@@ -107,6 +108,12 @@ class ReaderService:
             if info.magic == CARD_MAGIC0:
                 LOGGER.debug("card appears uninitialized, presenting default PIN and changing to app PIN")
                 self.transport.present_pin(CARD_DEFAULT_PIN)
+                # Wait for card to process PIN verification before disconnecting.
+                # This allows the card and reader to synchronize state properly,
+                # ensuring compatibility with both ACR38 and ACR39 reader families.
+                time.sleep(0.1)
+                self.transport.disconnect_card()
+                self.transport._ensure_connection()
                 self.transport.change_pin(self.personalized_pin)
             else:
                 LOGGER.debug("presenting configured app PIN")
