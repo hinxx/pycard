@@ -9,7 +9,7 @@ The project uses:
 
 The UI supports Slovenian and English. Slovenian is the default language, and the language can be changed at runtime from the app header.
 The personalized PIN for initialized cards is loaded from [`pycard.toml`](pycard.toml) instead of being hardcoded in the source.
-The config file is optional. If `pycard.toml` is missing, the app starts with the default PIN `FF FF FF` in memory. On startup it asks whether to set a personal PIN and creates the config file only when the user confirms. The dialog expects three hexadecimal bytes separated by spaces, for example `11 22 33`.
+The config file is optional. If `pycard.toml` is missing, the app starts with the default PIN `FF FF FF` in memory. On startup it asks whether to set a personal PIN and creates the config file only when the user confirms.
 
 ## What The Code Does
 
@@ -54,7 +54,7 @@ The app uses these rules:
 - Any other expected card is shown as a user card with a balance.
 - For user cards, entering a positive integer updates the displayed new total.
 - Updating a card writes a new record back to the card.
-- If a blank/uninitialized card is detected (`magic == 0xFFFFFFFF`), the app first presents the default PIN `FF FF FF` and then changes it to the personalized PIN from the config file.
+- If a blank/uninitialized card is detected (`magic == 0xFFFFFFFF`), the app first presents the default PIN `FF FF FF` and then changes it to the personalized PIN.
 - Card presence detection and connection handling behavior is implemented such that the SLE4442 writes work correctly with the ACR38U reader.
 - The transport layer detects ACR38- vs ACR39-family readers from the PC/SC reader name and normalizes SLE4442 read responses so the app always receives the expected record payload.
 
