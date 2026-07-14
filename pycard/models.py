@@ -26,6 +26,8 @@ class Info:
     unlocked: bool = False
     error_str: str = ""
     pin_error_counter: int = 0xFF
+    pin_verification_failed: bool = False
+    personalized_during_unlock: bool = False
     magic: int = CARD_MAGIC0
     id: int = USER_CARD_ID
     total: int = 0

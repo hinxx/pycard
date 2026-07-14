@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-DEFAULT_LANGUAGE = "sl"
+DEFAULT_LANGUAGE = "en"
 SUPPORTED_LANGUAGES = ("sl", "en")
 
 
@@ -28,11 +28,19 @@ STRINGS = {
         "button.update_card": "Posodobi kartico",
         "button.switch_to_admin": "Preklopi v admin",
         "button.switch_to_user": "Preklopi v uporabnika",
+        "button.personalize_user": "Uporabnik",
+        "button.personalize_admin": "Admin",
         "card.admin": "ADMIN",
         "message.no_card": "Kartica ni prisotna",
         "message.card_update_done": "Posodobitev kartice je končana",
         "message.reader_error": "Napaka bralnika",
         "message.pin_saved": "Osebni PIN je bil shranjen v konfiguracijo.",
+        "message.pin_incorrect": "Napačen PIN. Število preostalih poskusov: {attempts}. Ne poskušajte znova, dokler ne preverite, kateri PIN uporablja kartica. Za nadaljevanje odstranite in znova vstavite kartico.",
+        "message.pin_locked": "PIN kartice je trajno zaklenjen. Zaščiteno pisanje ni več mogoče in programska oprema kartice ne more odkleniti.",
+        "message.blank_card_waiting": "Prazna kartica čaka na personalizacijo.",
+        "message.blank_card_confirming": "Preverjanje, ali je kartica res prazna...",
+        "message.blank_card_cancelled": "Prazna kartica ni bila personalizirana. Odstranite jo in jo znova vstavite za ponovni poskus.",
+        "message.personal_pin_required": "Pred personalizacijo prazne kartice nastavite osebni PIN, ki ni FF FF FF.",
         "prompt.pin_setup_title": "Nastavitev osebnega PIN",
         "prompt.pin_setup_message": "V konfiguraciji je še vedno privzeti PIN FF FF FF. Ali želite nastaviti osebni PIN?",
         "prompt.pin_input_title": "Osebni PIN",
@@ -43,7 +51,10 @@ STRINGS = {
         "prompt.switch_to_admin_message": "Ali res želite preklopiti kartico v admin način?",
         "prompt.switch_to_user_title": "Potrdi preklop",
         "prompt.switch_to_user_message": "Ali res želite preklopiti kartico v uporabniški način?",
+        "prompt.blank_card_title": "Personalizacija prazne kartice",
+        "prompt.blank_card_message": "Zaznana je prazna kartica. Izberite, ali jo želite personalizirati kot uporabniško ali admin kartico.",
         "status.card_update_in_progress": "Posodabljanje kartice...",
+        "status.card_personalization_in_progress": "Personalizacija kartice...",
     },
     "en": {
         "app.title": "pycard",
@@ -67,11 +78,19 @@ STRINGS = {
         "button.update_card": "Update card",
         "button.switch_to_admin": "Switch to admin",
         "button.switch_to_user": "Switch to user",
+        "button.personalize_user": "User",
+        "button.personalize_admin": "Admin",
         "card.admin": "ADMIN",
         "message.no_card": "No card present",
         "message.card_update_done": "Card update done",
         "message.reader_error": "Reader error",
         "message.pin_saved": "Personal PIN was saved to the config file.",
+        "message.pin_incorrect": "Incorrect PIN. Remaining attempts: {attempts}. Do not retry until you have confirmed which PIN the card uses. Remove and reinsert the card to continue.",
+        "message.pin_locked": "The card PIN is permanently locked. Protected writes are no longer possible, and software cannot unlock the card.",
+        "message.blank_card_waiting": "The blank card is waiting to be personalized.",
+        "message.blank_card_confirming": "Confirming that the card is really blank...",
+        "message.blank_card_cancelled": "The blank card was not personalized. Remove and reinsert it to try again.",
+        "message.personal_pin_required": "Set a non-default personal PIN before personalizing a blank card.",
         "prompt.pin_setup_title": "Personal PIN Setup",
         "prompt.pin_setup_message": "The config file still uses the default PIN FF FF FF. Do you want to set a personal PIN?",
         "prompt.pin_input_title": "Personal PIN",
@@ -82,7 +101,10 @@ STRINGS = {
         "prompt.switch_to_admin_message": "Do you really want to switch this card to admin mode?",
         "prompt.switch_to_user_title": "Confirm Switch",
         "prompt.switch_to_user_message": "Do you really want to switch this card to user mode?",
+        "prompt.blank_card_title": "Personalize Blank Card",
+        "prompt.blank_card_message": "A blank card was detected. Choose whether to personalize it as a user or admin card.",
         "status.card_update_in_progress": "Card update in progress...",
+        "status.card_personalization_in_progress": "Personalizing card...",
     },
 }
 

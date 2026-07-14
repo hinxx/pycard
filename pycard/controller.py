@@ -5,6 +5,8 @@ import logging
 
 from pycard.models import (
     ADMIN_CARD_ID,
+    CARD_DEFAULT_PIN,
+    CARD_MAGIC0,
     CARD_MAGIC2,
     DEFAULT_TOP_UP,
     Info,
@@ -25,6 +27,10 @@ class AppController:
         self.info = Info(force=True)
         self._poll_job = None
         self._busy = False
+        self._pin_warning_counter: int | None = None
+        self._blank_card_prompted = False
+        self._blank_card_candidate = False
+        self._blank_card_message: tuple[str, str] | None = None
         self._current_add_text = str(DEFAULT_TOP_UP)
         self._current_new_total = DEFAULT_TOP_UP
         self.ui.bind_controller(self)
@@ -64,8 +70,76 @@ class AppController:
 
     def _detect_card(self) -> None:
         self.reader.detect(self.info)
-        if self.info.present and (self.info.change or self.info.force):
-            self.reader.read(self.info)
+        if not self.info.present:
+            self._blank_card_prompted = False
+            self._blank_card_candidate = False
+            self._blank_card_message = None
+            return
+        if not (self.info.change or self.info.force or self._blank_card_candidate):
+            return
+        if not self.reader.read(self.info):
+            return
+        if self.info.magic != CARD_MAGIC0:
+            self._blank_card_candidate = False
+            return
+        if not self._blank_card_candidate:
+            # ACR38 can transiently return all-FF data immediately after card
+            # insertion. Require another valid read on the next poll before
+            # treating the card as genuinely blank.
+            self._blank_card_candidate = True
+            self._blank_card_message = (
+                self.ui.t("message.blank_card_confirming"),
+                "info",
+            )
+            return
+        if not self._blank_card_prompted:
+            self._personalize_blank_card()
+
+    def _personalize_blank_card(self) -> None:
+        self._blank_card_prompted = True
+
+        if self.reader.personalized_pin == CARD_DEFAULT_PIN:
+            self._blank_card_message = (
+                self.ui.t("message.personal_pin_required"),
+                "error",
+            )
+            return
+
+        card_type = self.ui.prompt_for_blank_card_type()
+        if card_type is None:
+            self._blank_card_message = (
+                self.ui.t("message.blank_card_cancelled"),
+                "info",
+            )
+            return
+
+        card_id = ADMIN_CARD_ID if card_type == "admin" else USER_CARD_ID
+        self._busy = True
+        self._cancel_poll()
+        self.ui.set_busy(True, self.ui.t("status.card_personalization_in_progress"))
+
+        if not self.reader.personalize(self.info, card_id):
+            self._busy = False
+            self.ui.set_busy(False)
+            if self.info.pin_verification_failed:
+                self._pin_warning_counter = self.info.pin_error_counter
+                self._blank_card_message = None
+            else:
+                self._blank_card_message = (self.info.error_str, "error")
+            return
+
+        # Reselect and reread after personalization. This confirms the durable
+        # card state and leaves it locked until the first actual update.
+        if not self.reader.read(self.info):
+            self._blank_card_message = (self.info.error_str, "error")
+        else:
+            self._blank_card_message = None
+            # Personalization completed inside a poll where hardware presence
+            # did not change. Force this newly reread card state to replace the
+            # blank-card confirmation message during the current render.
+            self.info.change = True
+        self._busy = False
+        self.ui.set_busy(False)
 
     def _render(self) -> None:
         self.ui.set_presence(
@@ -73,6 +147,13 @@ class AppController:
             reader_name=self.info.reader_name,
             card_present=self.info.present,
         )
+
+        if not self.info.present:
+            self._pin_warning_counter = None
+
+        if self._pin_warning_counter is not None:
+            self.ui.show_message(self._pin_warning_message(self._pin_warning_counter), kind="error")
+            return
 
         if self.info.error:
             self.ui.show_message(self.info.error_str or self.ui.t("message.reader_error"), kind="error")
@@ -86,6 +167,14 @@ class AppController:
         if not self.info.present:
             if self.info.change or self.info.force:
                 self.ui.show_idle()
+            return
+
+        if self.info.magic == CARD_MAGIC0:
+            message, kind = self._blank_card_message or (
+                self.ui.t("message.blank_card_waiting"),
+                "info",
+            )
+            self.ui.show_message(message, kind=kind)
             return
 
         if self.info.id == ADMIN_CARD_ID:
@@ -149,7 +238,12 @@ class AppController:
         if not self.reader.unlock(self.info):
             self._busy = False
             self.ui.set_busy(False)
-            self.ui.show_message(self.info.error_str, kind="error")
+            if self.info.pin_verification_failed:
+                self._pin_warning_counter = self.info.pin_error_counter
+                message = self._pin_warning_message(self.info.pin_error_counter)
+            else:
+                message = self.info.error_str
+            self.ui.show_message(message, kind="error")
             self._schedule_poll()
             return
 
@@ -177,3 +271,9 @@ class AppController:
         self.ui.set_busy(False)
         self.ui.show_message(self.ui.t("message.card_update_done"), kind="success")
         self.refresh(force=True)
+
+    def _pin_warning_message(self, error_counter: int) -> str:
+        available_attempts = (error_counter & 0x07).bit_count()
+        if available_attempts == 0:
+            return self.ui.t("message.pin_locked")
+        return self.ui.t("message.pin_incorrect", attempts=available_attempts)

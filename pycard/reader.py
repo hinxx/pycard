@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import logging
-import time
 
 from pycard.models import (
+    ADMIN_CARD_ID,
     CARD_DEFAULT_PIN,
     CARD_MAGIC0,
+    CARD_MAGIC2,
     CARD_RECORD_OFFSET,
     CARD_RECORD_SIZE,
+    USER_CARD_ID,
     CardRecord,
     Info,
     decode_card_record,
     encode_card_record,
 )
-from pycard.pcsc import CardAbsentError, CardCommunicationError, MemoryCardTransport, PcscError
+from pycard.pcsc import (
+    CardAbsentError,
+    CardCommunicationError,
+    MemoryCardTransport,
+    PcscError,
+    PinVerificationError,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +63,17 @@ class ReaderService:
         )
         if info.change:
             info.unlocked = False
+        if not info.present:
+            # Card-specific state must never survive removal and be mistaken
+            # for the next card inserted into the reader.
+            info.unlocked = False
+            info.pin_verification_failed = False
+            info.personalized_during_unlock = False
+            info.pin_error_counter = 0xFF
+            info.magic = CARD_MAGIC0
+            info.id = USER_CARD_ID
+            info.total = 0
+            info.value = 0
         return info.present
 
     def read(self, info: Info) -> bool:
@@ -81,6 +100,11 @@ class ReaderService:
         info.value = record.value
         info.error = False
         info.error_str = ""
+        # Selecting the card type power-cycles the card and clears PIN
+        # authentication from any earlier operation.
+        info.unlocked = False
+        info.pin_verification_failed = False
+        info.personalized_during_unlock = False
         LOGGER.debug(
             "card read complete: magic=%d id=%d total=%d value=%d pin_errors=%d payload=%s",
             info.magic,
@@ -97,6 +121,7 @@ class ReaderService:
             LOGGER.debug("card already unlocked")
             return True
 
+        info.personalized_during_unlock = False
         try:
             LOGGER.debug(
                 "unlocking card: reader=%s magic=%d id=%d unlocked=%s",
@@ -106,19 +131,20 @@ class ReaderService:
                 info.unlocked,
             )
             if info.magic == CARD_MAGIC0:
-                LOGGER.debug("card appears uninitialized, presenting default PIN and changing to app PIN")
-                self.transport.present_pin(CARD_DEFAULT_PIN)
-                # Wait for card to process PIN verification before disconnecting.
-                # This allows the card and reader to synchronize state properly,
-                # ensuring compatibility with both ACR38 and ACR39 reader families.
-                time.sleep(0.1)
-                self.transport.disconnect_card()
-                self.transport._ensure_connection()
-                self.transport.change_pin(self.personalized_pin)
-            else:
-                LOGGER.debug("presenting configured app PIN")
-                self.transport.present_pin(self.personalized_pin)
+                raise CardCommunicationError(
+                    "blank card must be personalized before it can be updated"
+                )
+            LOGGER.debug("presenting configured app PIN")
+            self.transport.present_pin(self.personalized_pin)
+        except PinVerificationError as exc:
+            info.pin_error_counter = exc.error_counter
+            info.pin_verification_failed = True
+            info.error = True
+            info.error_str = ""
+            LOGGER.error("card PIN verification failed: counter=%02X", exc.error_counter)
+            return False
         except (CardCommunicationError, CardAbsentError) as exc:
+            info.pin_verification_failed = False
             info.error = True
             info.error_str = f"failed to unlock card: {exc}"
             LOGGER.error("card unlock failed: %s", exc)
@@ -127,7 +153,70 @@ class ReaderService:
         info.unlocked = True
         info.error = False
         info.error_str = ""
+        info.pin_verification_failed = False
         LOGGER.debug("card unlock complete")
+        return True
+
+    def personalize(self, info: Info, card_id: int) -> bool:
+        """Change a blank card's PIN and initialize its wallet record."""
+        if card_id not in (USER_CARD_ID, ADMIN_CARD_ID):
+            raise ValueError(f"unsupported card id: {card_id}")
+
+        info.unlocked = False
+        info.personalized_during_unlock = False
+        pin_changed = False
+        try:
+            if info.magic != CARD_MAGIC0:
+                raise CardCommunicationError("card is already personalized")
+            if self.personalized_pin == CARD_DEFAULT_PIN:
+                raise CardCommunicationError(
+                    "a non-default configured PIN is required to personalize a card"
+                )
+
+            LOGGER.debug(
+                "personalizing blank card: reader=%s target_id=%d",
+                info.reader_name,
+                card_id,
+            )
+            self.transport.present_pin(CARD_DEFAULT_PIN)
+            self.transport.change_pin(self.personalized_pin)
+            pin_changed = True
+
+            record = CardRecord(magic=CARD_MAGIC2, id=card_id, total=0, value=0)
+            payload = encode_card_record(record)
+            self.transport.write_memory_card(CARD_RECORD_OFFSET, payload)
+            written_payload = self.transport.read_memory_card(CARD_RECORD_OFFSET, CARD_RECORD_SIZE)
+            if written_payload != payload:
+                raise CardCommunicationError("wallet record verification failed")
+        except PinVerificationError as exc:
+            info.pin_error_counter = exc.error_counter
+            info.pin_verification_failed = True
+            info.error = True
+            info.error_str = ""
+            LOGGER.error("blank card PIN verification failed: counter=%02X", exc.error_counter)
+            return False
+        except PcscError as exc:
+            info.pin_verification_failed = False
+            info.error = True
+            if pin_changed:
+                info.error_str = (
+                    "PIN was changed to the configured value, but card personalization failed: "
+                    f"{exc}"
+                )
+            else:
+                info.error_str = f"failed to personalize card: {exc}"
+            LOGGER.error("card personalization failed: %s", exc)
+            return False
+
+        info.magic = record.magic
+        info.id = record.id
+        info.total = record.total
+        info.value = record.value
+        info.unlocked = True
+        info.error = False
+        info.error_str = ""
+        info.pin_verification_failed = False
+        LOGGER.debug("card personalization complete: id=%d", card_id)
         return True
 
     def update(self, info: Info) -> bool:

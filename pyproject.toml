@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pycard"
-version = "0.1.6"
+dynamic = ["version"]
 description = "pycard smart-card wallet utility"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,9 @@ windows-build = [
 
 [tool.setuptools]
 packages = ["pycard"]
+
+[tool.setuptools.dynamic]
+version = {attr = "pycard.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

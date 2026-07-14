@@ -29,6 +29,18 @@ class CardCommunicationError(PcscError):
     """The reader or card failed to complete a command."""
 
 
+class PinVerificationError(CardCommunicationError):
+    """The card rejected a PIN and returned its presentation error counter."""
+
+    def __init__(self, error_counter: int) -> None:
+        self.error_counter = error_counter & 0xFF
+        super().__init__(f"PIN verification failed with error counter {self.error_counter:02X}")
+
+
+class CardResetError(CardCommunicationError):
+    """PC/SC reports that the card reset and the active handle is stale."""
+
+
 class ReaderFamily(StrEnum):
     UNKNOWN = "unknown"
     ACR38 = "acr38"
@@ -57,16 +69,22 @@ class PyscardBackend:
         try:
             from smartcard.Exceptions import CardConnectionException
             from smartcard.Exceptions import NoCardException
+            from smartcard.CardConnection import CardConnection
             from smartcard.System import readers
             from smartcard.scard import SCARD_SCOPE_USER
             from smartcard.scard import SCARD_S_SUCCESS
             from smartcard.scard import SCARD_STATE_CHANGED
             from smartcard.scard import SCARD_STATE_EMPTY
             from smartcard.scard import SCARD_STATE_IGNORE
+            from smartcard.scard import SCARD_STATE_INUSE
+            from smartcard.scard import SCARD_STATE_MUTE
             from smartcard.scard import SCARD_STATE_PRESENT
+            from smartcard.scard import SCARD_STATE_EXCLUSIVE
             from smartcard.scard import SCARD_STATE_UNKNOWN
             from smartcard.scard import SCARD_STATE_UNAWARE
             from smartcard.scard import SCARD_STATE_UNAVAILABLE
+            from smartcard.scard import SCARD_STATE_UNPOWERED
+            from smartcard.scard import SCARD_W_RESET_CARD
             from smartcard.scard import SCardEstablishContext
             from smartcard.scard import SCardGetErrorMessage
             from smartcard.scard import SCardGetStatusChange
@@ -82,16 +100,22 @@ class PyscardBackend:
 
         self._CardConnectionException = CardConnectionException
         self._NoCardException = NoCardException
+        self._T0_protocol = CardConnection.T0_protocol
         self._readers = readers
         self._ListReadersException = ListReadersException
         self._SCARD_S_SUCCESS = SCARD_S_SUCCESS
         self._SCARD_STATE_CHANGED = SCARD_STATE_CHANGED
         self._SCARD_STATE_EMPTY = SCARD_STATE_EMPTY
         self._SCARD_STATE_IGNORE = SCARD_STATE_IGNORE
+        self._SCARD_STATE_INUSE = SCARD_STATE_INUSE
+        self._SCARD_STATE_MUTE = SCARD_STATE_MUTE
         self._SCARD_STATE_PRESENT = SCARD_STATE_PRESENT
+        self._SCARD_STATE_EXCLUSIVE = SCARD_STATE_EXCLUSIVE
         self._SCARD_STATE_UNKNOWN = SCARD_STATE_UNKNOWN
         self._SCARD_STATE_UNAWARE = SCARD_STATE_UNAWARE
         self._SCARD_STATE_UNAVAILABLE = SCARD_STATE_UNAVAILABLE
+        self._SCARD_STATE_UNPOWERED = SCARD_STATE_UNPOWERED
+        self._SCARD_W_RESET_CARD = SCARD_W_RESET_CARD
         self._SCardGetStatusChange = SCardGetStatusChange
         self._SCardGetErrorMessage = SCardGetErrorMessage
         self._hcontext = hcontext
@@ -118,6 +142,14 @@ class PyscardBackend:
             flags.append("EMPTY")
         if event_state & self._SCARD_STATE_PRESENT:
             flags.append("PRESENT")
+        if event_state & self._SCARD_STATE_EXCLUSIVE:
+            flags.append("EXCLUSIVE")
+        if event_state & self._SCARD_STATE_INUSE:
+            flags.append("INUSE")
+        if event_state & self._SCARD_STATE_MUTE:
+            flags.append("MUTE")
+        if event_state & self._SCARD_STATE_UNPOWERED:
+            flags.append("UNPOWERED")
         if not flags and event_state == self._SCARD_STATE_UNAWARE:
             flags.append("UNAWARE")
         return "|".join(flags) if flags else f"0x{event_state:08X}"
@@ -138,6 +170,11 @@ class PyscardBackend:
             event_state,
             self._describe_event_state(event_state),
         )
+        if event_state & self._SCARD_STATE_MUTE:
+            raise CardCommunicationError(
+                "card is physically present but not responding (PC/SC MUTE); "
+                "remove and reinsert it or reconnect the reader"
+            )
         if event_state & self._SCARD_STATE_PRESENT:
             return True
         if event_state & self._SCARD_STATE_EMPTY:
@@ -147,12 +184,13 @@ class PyscardBackend:
     def connect(self, reader: object) -> object:
         try:
             connection = reader.createConnection()
-            connection.connect()
-            LOGGER.debug("connected to card via reader %s", reader)
+            # ACS documents T=0 for the memory-card pseudo-APDU command set.
+            connection.connect(protocol=self._T0_protocol)
+            LOGGER.debug("connected to card via reader %s using T=0", reader)
         except self._NoCardException as exc:  # pragma: no cover - hardware dependent
             raise CardAbsentError(str(exc)) from exc
         except self._CardConnectionException as exc:  # pragma: no cover - hardware dependent
-            raise CardAbsentError(str(exc)) from exc
+            raise CardCommunicationError(f"failed to connect to card via {reader}: {exc}") from exc
         return connection
 
     def disconnect(self, connection: object) -> None:
@@ -165,6 +203,8 @@ class PyscardBackend:
         try:
             response, sw1, sw2 = connection.transmit(payload)
         except Exception as exc:  # pragma: no cover - hardware dependent
+            if getattr(exc, "hresult", None) == self._SCARD_W_RESET_CARD:
+                raise CardResetError("card was reset; the PC/SC connection must be reopened") from exc
             raise CardCommunicationError(str(exc)) from exc
         return response, sw1, sw2
 
@@ -204,8 +244,17 @@ class MemoryCardTransport:
         if selected is None:
             selected = readers[0]
 
+        selected_name = str(selected)
+        if self.reader_name and selected_name != self.reader_name:
+            LOGGER.debug(
+                "reader changed from %s to %s; discarding card connection",
+                self.reader_name,
+                selected_name,
+            )
+            self.disconnect_card()
+
         self.reader = selected
-        self.reader_name = str(selected)
+        self.reader_name = selected_name
         self.reader_family = self._detect_reader_family(self.reader_name)
         LOGGER.debug(
             "selected reader: name=%s family=%s",
@@ -216,6 +265,7 @@ class MemoryCardTransport:
 
     def disconnect_card(self) -> None:
         if self.connection is not None:
+            LOGGER.debug("discarding card connection for reader %s", self.reader_name or "<unknown>")
             self.backend.disconnect(self.connection)
         self.connection = None
 
@@ -249,7 +299,14 @@ class MemoryCardTransport:
     def transmit(self, payload: list[int]) -> tuple[bytes, tuple[int, int]]:
         connection = self._ensure_connection()
         LOGGER.debug("card request [%d]: %s", len(payload), " ".join(f"{b:02x}" for b in payload))
-        response, sw1, sw2 = self.backend.transmit(connection, payload)
+        try:
+            response, sw1, sw2 = self.backend.transmit(connection, payload)
+        except CardCommunicationError:
+            # A failed/reset PC/SC handle is never reused. The next poll or
+            # operation will establish a completely fresh connection.
+            if self.connection is connection:
+                self.disconnect_card()
+            raise
         LOGGER.debug(
             "card response [%d]: %s %02x %02x",
             len(response),
@@ -265,14 +322,6 @@ class MemoryCardTransport:
         raise CardCommunicationError(
             f"unexpected status word {received[0]:02X} {received[1]:02X}, "
             f"expected {expected[0]:02X} {expected[1]:02X}"
-        )
-
-    def _check_sw1(self, received: tuple[int, int], expected_sw1: int) -> None:
-        if received[0] == expected_sw1:
-            return
-        raise CardCommunicationError(
-            f"unexpected status word {received[0]:02X} {received[1]:02X}, "
-            f"expected SW1 {expected_sw1:02X}"
         )
 
     def select_memory_card(self) -> None:
@@ -307,13 +356,28 @@ class MemoryCardTransport:
     def get_error_count(self) -> int:
         response, sw = self.transmit([0xFF, 0xB1, 0x00, 0x00, 0x04])
         self._check_sw(sw, (0x90, 0x00))
-        return int(response[0])
+        if not response:
+            self.disconnect_card()
+            raise CardCommunicationError("PIN counter response was empty")
+
+        error_count = int(response[0])
+        if error_count & ~0x07:
+            self.disconnect_card()
+            raise CardCommunicationError(
+                f"invalid PIN counter {error_count:02X}; discarding transient card connection"
+            )
+        return error_count
 
     def present_pin(self, pin: tuple[int, int, int]) -> None:
         _, sw = self.transmit([0xFF, 0x20, 0x00, 0x00, 0x03, *pin])
-        # On ACS memory-card PIN presentation, SW1=0x90 indicates success while
-        # SW2 may vary by reader firmware/card combination.
-        self._check_sw1(sw, 0x90)
+        # The ACR38x CCID and ACR39 manuals define SW2 as the SLE4442
+        # presentation error counter. Only 0x07 means the PIN was accepted.
+        if sw[0] != 0x90:
+            raise CardCommunicationError(
+                f"PIN presentation failed with status word {sw[0]:02X} {sw[1]:02X}"
+            )
+        if sw[1] != 0x07:
+            raise PinVerificationError(sw[1])
 
     def change_pin(self, pin: tuple[int, int, int]) -> None:
         _, sw = self.transmit([0xFF, 0xD2, 0x00, 0x01, 0x03, *pin])

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pycard.i18n import DEFAULT_LANGUAGE, I18n
 
 try:  # pragma: no cover - import depends on local install
@@ -144,8 +146,59 @@ class _PinInputDialog(_BaseDialog):
         self.destroy()
 
 
+class _CardTypeDialog(_BaseDialog):
+    def __init__(
+        self,
+        parent: ctk.CTk,
+        title: str,
+        message: str,
+        user_text: str,
+        admin_text: str,
+        cancel_text: str,
+    ) -> None:
+        super().__init__(parent, title)
+        self.result: str | None = None
+
+        body = ctk.CTkFrame(self)
+        body.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, weight=1)
+
+        label = ctk.CTkLabel(body, text=message, wraplength=400, justify="left")
+        label.grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 20), sticky="w")
+
+        user_button = ctk.CTkButton(
+            body,
+            text=user_text,
+            command=lambda: self._choose("user"),
+        )
+        user_button.grid(row=1, column=0, padx=(16, 8), pady=(0, 12), sticky="ew")
+
+        admin_button = ctk.CTkButton(
+            body,
+            text=admin_text,
+            command=lambda: self._choose("admin"),
+            fg_color="#b45309",
+            hover_color="#92400e",
+        )
+        admin_button.grid(row=1, column=1, padx=(8, 16), pady=(0, 12), sticky="ew")
+
+        cancel_button = ctk.CTkButton(body, text=cancel_text, command=self._on_close)
+        cancel_button.grid(row=2, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="ew")
+        user_button.focus()
+
+    def _choose(self, card_type: str) -> None:
+        self.result = card_type
+        self.destroy()
+
+
 class MainWindow(ctk.CTk):
-    def __init__(self, language: str = DEFAULT_LANGUAGE, version_text: str = "") -> None:
+    def __init__(
+        self,
+        language: str = DEFAULT_LANGUAGE,
+        version_text: str = "",
+        on_language_changed: Callable[[str], None] | None = None,
+    ) -> None:
         super().__init__()
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
@@ -153,6 +206,7 @@ class MainWindow(ctk.CTk):
         self.i18n = I18n(language)
         self._presence_state = (False, "", False)
         self._version_text = version_text
+        self._on_language_changed = on_language_changed
         self._language_display_to_code = {"SL": "sl", "EN": "en"}
         self._language_code_to_display = {value: key for key, value in self._language_display_to_code.items()}
 
@@ -398,6 +452,8 @@ class MainWindow(ctk.CTk):
         language_code = self._language_display_to_code.get(language, DEFAULT_LANGUAGE)
         self.i18n.set_language(language_code)
         self._language_var.set(self._language_code_to_display[self.i18n.language])
+        if self._on_language_changed is not None:
+            self._on_language_changed(self.i18n.language)
         self._apply_translations()
         if self.controller is not None:
             self.controller.refresh(force=True)
@@ -451,6 +507,18 @@ class MainWindow(ctk.CTk):
                 button_text=self.t("button.ok"),
             )
             error_dialog.show_modal()
+
+    def prompt_for_blank_card_type(self) -> str | None:
+        dialog = _CardTypeDialog(
+            parent=self,
+            title=self.t("prompt.blank_card_title"),
+            message=self.t("prompt.blank_card_message"),
+            user_text=self.t("button.personalize_user"),
+            admin_text=self.t("button.personalize_admin"),
+            cancel_text=self.t("button.cancel"),
+        )
+        dialog.show_modal()
+        return dialog.result
 
     @staticmethod
     def _parse_pin_input(value: str) -> tuple[int, int, int] | None:

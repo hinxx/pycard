@@ -7,9 +7,8 @@ import sys
 import tkinter as tk
 
 from pycard import __version__
-from pycard.config import DEFAULT_PERSONALIZED_PIN, load_config, save_personalized_pin
+from pycard.config import DEFAULT_PERSONALIZED_PIN, load_config, save_language, save_personalized_pin
 from pycard.controller import AppController
-from pycard.i18n import DEFAULT_LANGUAGE
 from pycard.pcsc import MemoryCardTransport, PyscardBackend
 from pycard.reader import ReaderService
 from pycard.ui import MainWindow
@@ -65,12 +64,18 @@ def _apply_window_icon(ui: MainWindow) -> None:
 def main() -> int:
     configure_logging()
     config = load_config()
+    # Migrate an existing config without [ui].language and create a complete
+    # default config when no file exists yet.
+    if not config.language_configured:
+        save_language(config.config_path, config.language)
+        config = load_config(str(config.config_path))
     backend = PyscardBackend()
     transport = MemoryCardTransport(backend=backend)
     reader = ReaderService(transport=transport, personalized_pin=config.personalized_pin)
     ui = MainWindow(
-        language=os.getenv("PYCARD_LANG", DEFAULT_LANGUAGE),
+        language=os.getenv("PYCARD_LANG", config.language),
         version_text=__version__,
+        on_language_changed=lambda language: save_language(config.config_path, language),
     )
     _apply_window_icon(ui)
     if config.personalized_pin == DEFAULT_PERSONALIZED_PIN:
